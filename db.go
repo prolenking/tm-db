@@ -1,7 +1,10 @@
 package db
 
 import (
+	"bufio"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -33,8 +36,11 @@ const (
 	//   - requires gcc
 	//   - use rocksdb build tag (go build -tags rocksdb)
 	RocksDBBackend BackendType = "rocksdb"
+	// UnknownDBBackend unknown db type
+	UnknownDBBackend BackendType = "unknown"
 
-	BadgerDBBackend BackendType = "badgerdb"
+	FlagGoLeveldbOpts = "goleveldb.opts"
+	FlagRocksdbOpts   = "rocksdb.opts"
 )
 
 type dbCreator func(name string, dir string) (DB, error)
@@ -51,11 +57,21 @@ func registerDBCreator(backend BackendType, creator dbCreator, force bool) {
 
 // NewDB creates a new database of type backend with the given name.
 func NewDB(name string, backend BackendType, dir string) (DB, error) {
+	dataType := checkDBType(name, dir)
+	if dataType != UnknownDBBackend && dataType != backend {
+		panic(fmt.Sprintf("Invalid db_backend for <%s> ; expected %s, got %s",
+			filepath.Join(dir, name+".db"),
+			dataType,
+			backend))
+	}
+
 	dbCreator, ok := backends[backend]
 	if !ok {
-		keys := make([]string, 0, len(backends))
+		keys := make([]string, len(backends))
+		i := 0
 		for k := range backends {
-			keys = append(keys, string(k))
+			keys[i] = string(k)
+			i++
 		}
 		return nil, fmt.Errorf("unknown db_backend %s, expected one of %v",
 			backend, strings.Join(keys, ","))
@@ -66,4 +82,39 @@ func NewDB(name string, backend BackendType, dir string) (DB, error) {
 		return nil, fmt.Errorf("failed to initialize database: %w", err)
 	}
 	return db, nil
+}
+
+// checkDBType check whether the db file is goleveldb or rocksdb,
+// only goleveldb and rocksdb are supported, otherwise it returns unknown.
+// Ignore artificial changes to db files
+func checkDBType(name string, dir string) BackendType {
+	logPath := filepath.Join(dir, name+".db", "LOG")
+	file, err := os.Open(logPath)
+	if err != nil {
+		return UnknownDBBackend
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	var firstLine, secondLine string
+	line := 0
+	for scanner.Scan() {
+		line++
+		if line == 1 {
+			firstLine = scanner.Text()
+		}
+		if line == 2 {
+			secondLine = scanner.Text()
+			break
+		}
+	}
+
+	if strings.Contains(firstLine, "RocksDB") {
+		return RocksDBBackend
+	}
+	if strings.Contains(secondLine, "Level") {
+		return GoLevelDBBackend
+	}
+
+	return UnknownDBBackend
 }

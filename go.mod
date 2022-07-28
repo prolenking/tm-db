@@ -4,9 +4,13 @@ go 1.16
 
 require (
 	github.com/dgraph-io/badger/v2 v2.2007.2
+	github.com/facebookgo/ensure v0.0.0-20200202191622-63f1cf65ac4c // indirect
+	github.com/facebookgo/stack v0.0.0-20160209184415-751773369052 // indirect
+	github.com/facebookgo/subset v0.0.0-20200203212716-c811ad88dec4 // indirect
 	github.com/gogo/protobuf v1.3.2
 	github.com/google/btree v1.0.0
 	github.com/jmhodges/levigo v1.0.0
+	github.com/spf13/viper v1.3.2
 	github.com/stretchr/testify v1.7.0
 	github.com/syndtr/goleveldb v1.0.1-0.20200815110645-5c35d600f0ca
 	github.com/tecbot/gorocksdb v0.0.0-20191217155057-f0fad39f321c
@@ -16,7 +20,3 @@ require (
 
 // Breaking changes were released with the wrong tag (use v0.6.6 or later).
 retract v0.6.5
-
-// FIXME: gorocksdb bindings for OptimisticTransactionDB are not merged upstream, so we use a fork
-// See https://github.com/tecbot/gorocksdb/pull/216
-replace github.com/tecbot/gorocksdb => github.com/roysc/gorocksdb v1.1.1

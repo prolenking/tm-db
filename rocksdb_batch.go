@@ -1,25 +1,32 @@
+//go:build rocksdb
 // +build rocksdb
 
 package db
 
 import "github.com/tecbot/gorocksdb"
 
-type rocksDBBatch struct {
+type RocksDBBatch struct {
 	db    *RocksDB
 	batch *gorocksdb.WriteBatch
 }
 
-var _ Batch = (*rocksDBBatch)(nil)
+var _ Batch = (*RocksDBBatch)(nil)
 
-func newRocksDBBatch(db *RocksDB) *rocksDBBatch {
-	return &rocksDBBatch{
+func NewRocksDBBatch(db *RocksDB) *RocksDBBatch {
+	return &RocksDBBatch{
 		db:    db,
 		batch: gorocksdb.NewWriteBatch(),
 	}
 }
 
+func (b *RocksDBBatch) assertOpen() {
+	if b.batch == nil {
+		panic("batch has been written or closed")
+	}
+}
+
 // Set implements Batch.
-func (b *rocksDBBatch) Set(key, value []byte) error {
+func (b *RocksDBBatch) Set(key, value []byte) error {
 	if len(key) == 0 {
 		return errKeyEmpty
 	}
@@ -34,7 +41,7 @@ func (b *rocksDBBatch) Set(key, value []byte) error {
 }
 
 // Delete implements Batch.
-func (b *rocksDBBatch) Delete(key []byte) error {
+func (b *RocksDBBatch) Delete(key []byte) error {
 	if len(key) == 0 {
 		return errKeyEmpty
 	}
@@ -46,7 +53,7 @@ func (b *rocksDBBatch) Delete(key []byte) error {
 }
 
 // Write implements Batch.
-func (b *rocksDBBatch) Write() error {
+func (b *RocksDBBatch) Write() error {
 	if b.batch == nil {
 		return errBatchClosed
 	}
@@ -60,7 +67,7 @@ func (b *rocksDBBatch) Write() error {
 }
 
 // WriteSync implements Batch.
-func (b *rocksDBBatch) WriteSync() error {
+func (b *RocksDBBatch) WriteSync() error {
 	if b.batch == nil {
 		return errBatchClosed
 	}
@@ -73,7 +80,7 @@ func (b *rocksDBBatch) WriteSync() error {
 }
 
 // Close implements Batch.
-func (b *rocksDBBatch) Close() error {
+func (b *RocksDBBatch) Close() error {
 	if b.batch != nil {
 		b.batch.Destroy()
 		b.batch = nil

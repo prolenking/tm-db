@@ -145,3 +145,7 @@ type Iterator interface {
 	// Close closes the iterator, relasing any allocated resources.
 	Close() error
 }
+
+// UnsafeValueProcessor called after DB Get if the error of Get is nil, value is the result of DB Get.
+// CONTRACT: value is readonly and can not be referenced after return
+type UnsafeValueProcessor func(value []byte) (interface{}, error)

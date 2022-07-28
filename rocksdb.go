@@ -4,8 +4,10 @@ package db
 
 import (
 	"fmt"
+	"github.com/spf13/viper"
 	"path/filepath"
 	"runtime"
+	"strconv"
 
 	"github.com/tecbot/gorocksdb"
 )
@@ -27,18 +29,82 @@ type RocksDB struct {
 
 var _ DB = (*RocksDB)(nil)
 
+const (
+	blockSize    = "block_size"
+	blockCache   = "block_cache"
+	statistics   = "statistics"
+	maxOpenFiles = "max_open_files"
+	mmapRead     = "allow_mmap_reads"
+	mmapWrite    = "allow_mmap_writes"
+)
+
 func NewRocksDB(name string, dir string) (*RocksDB, error) {
 	// default rocksdb option, good enough for most cases, including heavy workloads.
 	// 1GB table cache, 512MB write buffer(may use 50% more on heavy workloads).
 	// compression: snappy as default, need to -lsnappy to enable.
+	params := parseOptParams(viper.GetString(FlagRocksdbOpts))
+
 	bbto := gorocksdb.NewDefaultBlockBasedTableOptions()
+	if v, ok := params[blockSize]; ok {
+		size, err := toBytes(v)
+		if err != nil {
+			panic(fmt.Sprintf("Invalid options parameter %s: %s", blockSize, err))
+		}
+		bbto.SetBlockSize(int(size))
+	}
 	bbto.SetBlockCache(gorocksdb.NewLRUCache(1 << 30))
+	if v, ok := params[blockCache]; ok {
+		cache, err := toBytes(v)
+		if err != nil {
+			panic(fmt.Sprintf("Invalid options parameter %s: %s", blockCache, err))
+		}
+		bbto.SetBlockCache(gorocksdb.NewLRUCache(cache))
+	}
 	bbto.SetFilterPolicy(gorocksdb.NewBloomFilter(10))
 
 	opts := gorocksdb.NewDefaultOptions()
 	opts.SetBlockBasedTableFactory(bbto)
 	opts.SetCreateIfMissing(true)
 	opts.IncreaseParallelism(runtime.NumCPU())
+
+	if v, ok := params[statistics]; ok {
+		enable, err := strconv.ParseBool(v)
+		if err != nil {
+			panic(fmt.Sprintf("Invalid options parameter %s: %s", statistics, err))
+		}
+		if enable {
+			opts.EnableStatistics()
+		}
+	}
+
+	opts.SetMaxOpenFiles(-1)
+	if v, ok := params[maxOpenFiles]; ok {
+		maxOpenFiles, err := strconv.Atoi(v)
+		if err != nil {
+			panic(fmt.Sprintf("Invalid options parameter %s: %s", maxOpenFiles, err))
+		}
+		opts.SetMaxOpenFiles(maxOpenFiles)
+	}
+
+	opts.SetAllowMmapReads(false)
+	if v, ok := params[mmapRead]; ok {
+		enable, err := strconv.ParseBool(v)
+		if err != nil {
+			panic(fmt.Sprintf("Invalid options parameter %s: %s", mmapRead, err))
+		}
+		opts.SetAllowMmapReads(enable)
+	}
+
+	if v, ok := params[mmapWrite]; ok {
+		enable, err := strconv.ParseBool(v)
+		if err != nil {
+			panic(fmt.Sprintf("Invalid options parameter %s: %s", mmapWrite, err))
+		}
+		if enable {
+			opts.SetAllowMmapWrites(enable)
+		}
+	}
+
 	// 1.5GB maximum memory use for writebuffer.
 	opts.OptimizeLevelStyleCompaction(512 * 1024 * 1024)
 	return NewRocksDBWithOptions(name, dir, opts)
@@ -65,9 +131,7 @@ func NewRocksDBWithOptions(name string, dir string, opts *gorocksdb.Options) (*R
 
 // Get implements DB.
 func (db *RocksDB) Get(key []byte) ([]byte, error) {
-	if len(key) == 0 {
-		return nil, errKeyEmpty
-	}
+	key = nonNilBytes(key)
 	res, err := db.db.Get(db.ro, key)
 	if err != nil {
 		return nil, err
@@ -86,12 +150,8 @@ func (db *RocksDB) Has(key []byte) (bool, error) {
 
 // Set implements DB.
 func (db *RocksDB) Set(key []byte, value []byte) error {
-	if len(key) == 0 {
-		return errKeyEmpty
-	}
-	if value == nil {
-		return errValueNil
-	}
+	key = nonNilBytes(key)
+	value = nonNilBytes(value)
 	err := db.db.Put(db.wo, key, value)
 	if err != nil {
 		return err
@@ -101,12 +161,8 @@ func (db *RocksDB) Set(key []byte, value []byte) error {
 
 // SetSync implements DB.
 func (db *RocksDB) SetSync(key []byte, value []byte) error {
-	if len(key) == 0 {
-		return errKeyEmpty
-	}
-	if value == nil {
-		return errValueNil
-	}
+	key = nonNilBytes(key)
+	value = nonNilBytes(value)
 	err := db.db.Put(db.woSync, key, value)
 	if err != nil {
 		return err
@@ -116,9 +172,7 @@ func (db *RocksDB) SetSync(key []byte, value []byte) error {
 
 // Delete implements DB.
 func (db *RocksDB) Delete(key []byte) error {
-	if len(key) == 0 {
-		return errKeyEmpty
-	}
+	key = nonNilBytes(key)
 	err := db.db.Delete(db.wo, key)
 	if err != nil {
 		return err
@@ -128,9 +182,7 @@ func (db *RocksDB) Delete(key []byte) error {
 
 // DeleteSync implements DB.
 func (db *RocksDB) DeleteSync(key []byte) error {
-	if len(key) == 0 {
-		return errKeyEmpty
-	}
+	key = nonNilBytes(key)
 	err := db.db.Delete(db.woSync, key)
 	if err != nil {
 		return nil
@@ -178,23 +230,17 @@ func (db *RocksDB) Stats() map[string]string {
 
 // NewBatch implements DB.
 func (db *RocksDB) NewBatch() Batch {
-	return newRocksDBBatch(db)
+	return NewRocksDBBatch(db)
 }
 
 // Iterator implements DB.
 func (db *RocksDB) Iterator(start, end []byte) (Iterator, error) {
-	if (start != nil && len(start) == 0) || (end != nil && len(end) == 0) {
-		return nil, errKeyEmpty
-	}
 	itr := db.db.NewIterator(db.ro)
-	return newRocksDBIterator(itr, start, end, false), nil
+	return NewRocksDBIterator(itr, start, end, false), nil
 }
 
 // ReverseIterator implements DB.
 func (db *RocksDB) ReverseIterator(start, end []byte) (Iterator, error) {
-	if (start != nil && len(start) == 0) || (end != nil && len(end) == 0) {
-		return nil, errKeyEmpty
-	}
 	itr := db.db.NewIterator(db.ro)
-	return newRocksDBIterator(itr, start, end, true), nil
+	return NewRocksDBIterator(itr, start, end, true), nil
 }
